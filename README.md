@@ -1,4 +1,4 @@
-flume-ng-sql-source
+flume-ng-sql-sink
 ================
 
 This project is used for [flume-ng](https://github.com/apache/flume) to communicate with sql databases
@@ -16,10 +16,10 @@ Compilation and packaging
 Deployment
 ----------
 
-Copy flume-ng-sql-source-<version>.jar in target folder into flume plugins dir folder
+Copy flume-ng-sql-sink-<version>.jar in target folder into flume plugins dir folder
 ```
-  $ mkdir -p $FLUME_HOME/plugins.d/sql-source/lib $FLUME_HOME/plugins.d/sql-source/libext
-  $ cp flume-ng-sql-source-0.8.jar $FLUME_HOME/plugins.d/sql-source/lib
+  $ mkdir -p $FLUME_HOME/plugins.d/sql-sink/lib $FLUME_HOME/plugins.d/sql-sink/libext
+  $ cp flume-ng-sql-sink-1.0.jar $FLUME_HOME/plugins.d/sql-sink/lib
 ```
 
 ### Specific installation by database engine
@@ -74,29 +74,12 @@ Mandatory properties in <b>bold</b>
 | hibernate.c3p0.max_size | - | Max connection pool size |
 | default.charset.resultset | UTF-8 | Result set from DB converted to charset character encoding |
 
-Standard Query
--------------
-If no custom query is set, ```SELECT <columns.to.select> FROM <table>``` will be executed each ```run.query.delay``` milliseconds configured
-
-Custom Query
--------------
-A custom query is supported to bring the possibility of using the entire SQL language. This is powerful, but risky, be careful with the custom queries used.  
-
-To avoid row export repetitions use the $@$ special character in WHERE clause, to incrementaly export not processed rows and the new ones inserted.
-
-IMPORTANT: For proper operation of Custom Query ensure that incremental field will be returned in the first position of the Query result.
-
-Example:
-```
-agent.sources.sql-source.custom.query = SELECT incrementalField,field2 FROM table1 WHERE incrementalField > $@$ 
-```
-
 Configuration example
 --------------------
 
 ```properties
 # For each one of the sources, the type is defined
-agent.sources.sqlSource.type = org.keedio.flume.source.SQLSource
+agent.sources.sqlSource.type = org.ricco.flume.sink.SQLSink
 
 agent.sources.sqlSource.hibernate.connection.url = jdbc:db2://192.168.56.70:50000/sample
 
@@ -107,33 +90,7 @@ agent.sources.sqlSource.hibernate.connection.autocommit = true
 agent.sources.sqlSource.hibernate.dialect = org.hibernate.dialect.DB2Dialect
 agent.sources.sqlSource.hibernate.connection.driver_class = com.ibm.db2.jcc.DB2Driver
 
-#agent.sources.sqlSource.table = employee1
-
-# Columns to import to kafka (default * import entire row)
-#agent.sources.sqlSource.columns.to.select = *
-
-# Query delay, each configured milisecond the query will be sent
-agent.sources.sqlSource.run.query.delay=10000
-
-# Status file is used to save last readed row
-agent.sources.sqlSource.status.file.path = /var/log/flume
-agent.sources.sqlSource.status.file.name = sqlSource.status
-
-# Custom query
-agent.sources.sqlSource.start.from = 19700101000000000000
-agent.sources.sqlSource.custom.query = SELECT * FROM (select DECIMAL(test) * 1000000 AS INCREMENTAL, EMPLOYEE1.* from employee1 UNION select DECIMAL(test) * 1000000 AS INCREMENTAL, EMPLOYEE2.* from employee2) WHERE INCREMENTAL > $@$ ORDER BY INCREMENTAL ASC
-
-agent.sources.sqlSource.batch.size = 1000
-agent.sources.sqlSource.max.rows = 1000
-agent.sources.sqlSource.delimiter.entry = |
-
-agent.sources.sqlSource.hibernate.connection.provider_class = org.hibernate.connection.C3P0ConnectionProvider
-agent.sources.sqlSource.hibernate.c3p0.min_size=1
-agent.sources.sqlSource.hibernate.c3p0.max_size=10
-
-# The channel can be defined as follows.
-agent.sources.sqlSource.channels = memoryChannel
-```
+# To be continued
 
 Known Issues
 ---------
@@ -149,11 +106,9 @@ Use ```SQLServerCustomDialect``` in flume configuration file to solve this probl
 Special thanks
 ---------------
 
-I used flume-ng-kafka to guide me (https://github.com/baniuyao/flume-ng-kafka-source.git).
-Thanks to [Frank Yao](https://github.com/baniuyao).
+I used keedio/flume-ng-sql-source to guide me (https://github.com/keedio/flume-ng-sql-source).
+Thanks to [keedio](https://github.com/keedio).
 
 Version History
 ---------------
-+ Version 1.5.1 added charset encoding for result set is now configurable.
-+ Stable version is 1.5.0 (compatible with Apache Flume 1.8.0)
-+ Previous stable version is 1.4.3 (compatible with Apache Flume prior to 1.7.0)
++ Version 1.0 initial version.
