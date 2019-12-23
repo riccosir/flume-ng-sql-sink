@@ -20,7 +20,7 @@ import org.apache.flume.Context;
 /**
  * Helper class to manage hibernate sessions and perform queries
  * 
- * @author <a href="mailto:mvalle@keedio.com">Marcelo Valle</a>
+ * @author <a href="mailto:riccosir@qq.com">Ricco</a>
  *
  */
 public class HibernateHelper {

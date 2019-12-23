@@ -23,8 +23,7 @@ import org.slf4j.LoggerFactory;
  * <tt>max.rows: </tt> Max rows to import from DB in one query <p>
  * <tt>custom.query: </tt> Custom query to execute to database (be careful) <p>
  *
- * @author <a href="mailto:mvalle@keedio.com">Marcelo Valle</a>
- * @author <a href="mailto:lalazaro@keedio.com">Luis Lazaro</a>
+ * @author <a href="mailto:ricco@qq.com">Ricco</a>
  */
 
 public class SQLSinkHelper {

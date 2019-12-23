@@ -91,7 +91,7 @@ agent.sources.sqlSource.hibernate.dialect = org.hibernate.dialect.DB2Dialect
 agent.sources.sqlSource.hibernate.connection.driver_class = com.ibm.db2.jcc.DB2Driver
 
 # To be continued
-
+```
 Known Issues
 ---------
 An issue with Java SQL Types and Hibernate Types could appear Using SQL Server databases and SQL Server Dialect coming with Hibernate.  
