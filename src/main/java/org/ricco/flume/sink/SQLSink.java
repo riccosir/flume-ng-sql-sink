@@ -88,20 +88,26 @@ public class SQLSink extends AbstractSink implements Configurable {
 	@Override
 	public Status process() {
         //sqlSinkCounter.startProcess();
-        LOG.info("process");
+        Status status = Status.BACKOFF;
 
         try {
-            List<String[]> lines = csvReader.readAll();
-            if(lines != null) {
+            List<String[]> lines = new ArrayList<>();
+            String[] line ;
+            do {
+                line = csvReader.readNext();
+                if(line != null && line[0].length() > 0) lines.add(line);
+            } while(line != null && line[0].length() > 0);
+
+            if(lines.size() > 0) {
                 // Save to database
-                List<List<Object>> result = hibernateHelper.executeQuery(lines);
+                hibernateHelper.executeQuery(lines);
+                status = Status.READY;
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
-        return Status.BACKOFF;
+
+        return status;
 	}
  
 	/**
@@ -136,42 +142,48 @@ public class SQLSink extends AbstractSink implements Configurable {
     }
     
     private class ChannelReader extends Reader{
-        private CharBuffer charBuffer;
-        private int remainBytes = 0;
+        private char[] remainBytes = new char[0];
 
         @Override
         public int read(char[] cbuf, int off, int len) throws IOException {
             Channel channel = getChannel();
-            Transaction transaction = channel.getTransaction();
             int bytesRead = 0;
 
-            try {
-                if(remainBytes > 0) {
-                    bytesRead = len >= remainBytes ? len : remainBytes;
-                    System.arraycopy(charBuffer.array(), 0, cbuf, off, bytesRead);
-                    remainBytes -= bytesRead;
-                    return bytesRead;
-                } else {
+            if(remainBytes.length > 0) {
+                LOG.info("ChannelReader.remainBytes" + remainBytes);
+                bytesRead = len - off >= remainBytes.length ? remainBytes.length : len - off;
+                System.arraycopy(remainBytes, 0, cbuf, off, bytesRead);
+                if(bytesRead < remainBytes.length) {
+                    char[] temp = remainBytes;
+                    remainBytes = new char[temp.length - bytesRead];
+                    System.arraycopy(temp, bytesRead, remainBytes, 0, temp.length - bytesRead);
+                }
+                return bytesRead;
+            } else {
+                Transaction transaction = channel.getTransaction();
+                try {
                     transaction.begin();
                     Event event = channel.take();
                     transaction.commit();
 
                     if (event != null) {
-                        byte[] buf = event.getBody();
-                        Charset cs = Charset.forName(sqlSinkHelper.getDefaultCharsetResultSet());
-                        ByteBuffer byteBuffer = ByteBuffer.allocate(buf.length);
-                        byteBuffer.put(buf);
-                        byteBuffer.flip();
-                        charBuffer = cs.decode(byteBuffer);
-
-                        bytesRead = len >= buf.length ? len : buf.length;
-                        System.arraycopy(charBuffer.array(), 0, cbuf, off, bytesRead);
-
-                        remainBytes = buf.length - bytesRead;
+                        String body = new String(event.getBody(), Charset.forName(sqlSinkHelper.getDefaultCharsetResultSet()));
+                        body += "\r\n";
+                        bytesRead = len - off >= body.length() ? body.length() : len - off;
+                        System.arraycopy(body.toCharArray(), 0, cbuf, off, bytesRead);
+                        remainBytes = body.substring(bytesRead).toCharArray();
                     }
+                } catch (Exception e) {
+                    LOG.error("Unable to read flume event", e);
+                } finally {
+                    transaction.close();
                 }
-            } catch (Exception e) {
-                LOG.error("Unable to read flume event", e);
+            }
+
+            if(bytesRead <= 0) {
+                cbuf[off] = '\r';
+                cbuf[off + 1] = '\n';
+                bytesRead = 2;
             }
 
             return bytesRead;

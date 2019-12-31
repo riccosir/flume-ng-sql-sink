@@ -11,6 +11,9 @@ import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.cfg.Configuration;
+import org.hibernate.exception.ConstraintViolationException;
+import org.hibernate.exception.GenericJDBCException;
+import org.hibernate.exception.SQLGrammarException;
 import org.hibernate.service.ServiceRegistry;
 import org.hibernate.transform.Transformers;
 import org.slf4j.Logger;
@@ -92,9 +95,10 @@ public class HibernateHelper {
 	 * @throws InterruptedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public List<List<Object>> executeQuery(List<String[]> lines) throws InterruptedException {
+	public boolean executeQuery(List<String[]> lines) throws InterruptedException {
 
-		String tableName = "";
+		String tableNamePre = "";
+		int finishCount = 0;
 
 		LOG.info("executeQuery");
 		
@@ -103,15 +107,34 @@ public class HibernateHelper {
 		}
 
 		for(int i = 0; i < lines.size(); i++) {
-            String nextTableName = sqlSinkHelper.buildTableName(lines.get(i));
-            if (tableName.length() > 0 && nextTableName != tableName) {
-                query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableName)));
-                tableName = nextTableName;
-            }
-            query(session.createSQLQuery(sqlSinkHelper.buildInsertQuery(lines.get(i))));
+			String tableName = sqlSinkHelper.buildTableName(lines.get(i));
+            int queryResult = query(session.createSQLQuery(sqlSinkHelper.buildInsertQuery(lines.get(i))));
+            if(queryResult == 1) {
+				// Create table then retry
+				LOG.info("Create table " + tableName);
+				if (0 == query(session.createSQLQuery(sqlSinkHelper.buildCreateQuery(tableName)))) {
+					queryResult = query(session.createSQLQuery(sqlSinkHelper.buildInsertQuery(lines.get(i))));
+				}
+			}
+			else if(queryResult == 2) {
+				// Try update
+				queryResult = query(session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(lines.get(i))));
+			}
+
+			if(queryResult != 0) {
+            	// TODO: Insert Error
+				LOG.error("Insert Error:" + String.join(",", lines.get(i)));
+			} else {
+				finishCount++;
+			}
+
+			if(!tableNamePre.equals(tableName)) {
+            	if(tableNamePre.length() > 0) query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableNamePre)));
+				tableNamePre = tableName;
+			}
         }
-		
-		return query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableName)));
+		query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableNamePre)));
+		return finishCount > 0;
 	}
 
 	private void resetConnection() throws InterruptedException{
@@ -125,16 +148,24 @@ public class HibernateHelper {
 		
 	}
 
-	private List<List<Object>> query(Query query) throws InterruptedException {
-		LOG.info("query");
-        List<List<Object>> rowsList = new ArrayList<List<Object>>() ;
-        try {
-            rowsList = query.setResultTransformer(Transformers.TO_LIST).list();
-        } catch (Exception e) {
-            LOG.error("Exception thrown, resetting connection.", e);
-            resetConnection();
-        }
-
-        return rowsList;
+	private int query(Query query) throws InterruptedException {
+		LOG.info(query.getQueryString());
+		if(query.getQueryString().length() > 0) {
+			try {
+				query.executeUpdate();
+			} catch (SQLGrammarException e) {
+				return 1;
+			} catch (ConstraintViolationException e) {
+				return 2;
+			} catch (GenericJDBCException e) {
+				if(e.getErrorCode() == 0) return 0;
+				return -1;
+			} catch (Exception e) {
+				LOG.error("Exception thrown, resetting connection.", e);
+				resetConnection();
+				return -1;
+			}
+		}
+        return 0;
     }
 }

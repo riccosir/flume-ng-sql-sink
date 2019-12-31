@@ -53,8 +53,8 @@ public class SQLSinkHelper {
     this.context = context;
 
     tablePrefix = context.getString("table.prefix");
-    String string = context.getString("columns.to.insert", "*");
-    if(string != null) columnsToInsert = string.split(",");
+    String string = context.getString("columns.to.insert", "");
+    if(string != null && string.length() > 0) columnsToInsert = string.split(",");
     string = context.getString("key.columns");
     if(string != null) keyColumns = string.split(",");
     timeColumnName = context.getString("table.time.column");
@@ -87,29 +87,53 @@ public class SQLSinkHelper {
   }
 
   public String buildTableName(String[] values) {
-      if(tableTimeColumn > 0 && tableTimeColumn <= values.length) {
-          SimpleDateFormat sdf = new SimpleDateFormat(tableFormatter);
-          DateTime time = DateTime.parse(values[tableTimeColumn - 1]);
-          return  tablePrefix + sdf.format(time);
+      String prefix = tablePrefix;
+      try {
+          if (prefix.contains("@") && columnsToInsert != null) {
+              for (int i = columnsToInsert.length; i >= 1; i--) {
+                  String replacement = i <= values.length ? values[i - 1] : "";
+                  prefix = prefix.replace("@" + i, replacement);
+              }
+          }
+          if (tableTimeColumn > 0 && tableTimeColumn <= values.length) {
+              SimpleDateFormat sdf = new SimpleDateFormat(tableFormatter);
+              Date date = sdf.parse(values[tableTimeColumn - 1]);
+
+              if(prefix.contains("#")) prefix = prefix.replace("#", sdf.format(date));
+              else prefix = prefix + sdf.format(date);
+          }
+      } catch(Exception e) {
+          LOG.error("Build table name error :" + e.toString());
+          return null;
       }
-      return tablePrefix;
+      return prefix;
   }
 
   public String buildInsertQuery(String[] values) {
       String columnNames = "";
       String columnValues = "";
-      for (int i = 0; i < values.length && i < columnsToInsert.length; i++) {
-          String columnName = columnsToInsert[i].trim();
-          if (values[i].length() > 0 && columnName.length() > 0) {
+      String query = "";
+      for (int i = 0; i < values.length; i++) {
+          String columnName = columnsToInsert == null ? "" : columnsToInsert[i].trim();
+          boolean skip = columnsToInsert != null && columnName.length() <= 0;
+          if (!skip) {
               if (columnNames.length() > 0) {
                   columnNames += ",";
+              }
+              if (columnValues.length() > 0) {
                   columnValues += ",";
               }
               columnNames += columnName;
               columnValues += "'" + values[i] + "'";
           }
       }
-      return "insert into " + buildTableName(values) + "(" + columnNames + " values (" + columnValues + ")";
+      if (columnNames.length() > 0) {
+          columnNames = "(" + columnNames + ")";
+      }
+      if(columnValues.length() > 0) {
+          query = "insert into " + buildTableName(values) + columnNames + " values (" + columnValues + ")";
+      }
+      return query;
   }
 
   public String buildCreateQuery(String tableName) {
@@ -130,7 +154,8 @@ public class SQLSinkHelper {
               }
           }
       }
-      return "update " + buildTableName(values) + "set " + String.join(",", set) + " where (" + String.join(",", where) +")";
+      if(where.size() <= 0 || set.size() <= 0) return "";
+      return "update " + buildTableName(values) + " set " + String.join(",", set) + " where " + String.join(" and ", where);
   }
 
   public String buildPostQuery(String tableName) {
@@ -177,6 +202,10 @@ public class SQLSinkHelper {
     }
     if (tablePrefix == null) {
       throw new ConfigurationException("property table prefix not set");
+    }
+
+    if(tablePrefix.contains("@") && (columnsToInsert == null || columnsToInsert.length <= 0)) {
+        throw new ConfigurationException("property column to insert not set");
     }
 
     if(tableFormatter != null && tableTimeColumn <= 0) {
