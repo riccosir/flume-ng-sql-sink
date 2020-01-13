@@ -88,24 +88,43 @@ public class SQLSink extends AbstractSink implements Configurable {
 	@Override
 	public Status process() {
         //sqlSinkCounter.startProcess();
-        Status status = Status.BACKOFF;
+        Status status = Status.READY;
 
-        try {
-            List<String[]> lines = new ArrayList<>();
-            String[] line ;
-            do {
+        List<String[]> lines = new ArrayList<>();
+        String[] line;
+
+        Channel channel = getChannel();
+        Transaction transaction = channel.getTransaction();
+        transaction.begin();
+
+        do {
+            try {
                 line = csvReader.readNext();
-                if(line != null && line[0].length() > 0) lines.add(line);
-            } while(line != null && line[0].length() > 0);
-
-            if(lines.size() > 0) {
-                // Save to database
-                hibernateHelper.executeQuery(lines);
-                status = Status.READY;
+                if (line[0].length()>0) {
+                    lines.add(line);
+                } else {
+                    status = Status.BACKOFF;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                break;
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } while (line[0].length() > 0 && lines.size() < sqlSinkHelper.getBatchSize());
+
+        int saveCount = 0;
+        if(lines.size() > 0) {
+            LOG.info("Sinking " + lines.size() + " lines");
+
+            try {
+                saveCount = hibernateHelper.executeQuery(lines);
+            } catch(Exception e) {
+            }
         }
+
+        if(saveCount <= 0) transaction.rollback();
+        else transaction.commit();
+
+        transaction.close();
 
         return status;
 	}
@@ -160,11 +179,8 @@ public class SQLSink extends AbstractSink implements Configurable {
                 }
                 return bytesRead;
             } else {
-                Transaction transaction = channel.getTransaction();
                 try {
-                    transaction.begin();
                     Event event = channel.take();
-                    transaction.commit();
 
                     if (event != null) {
                         String body = new String(event.getBody(), Charset.forName(sqlSinkHelper.getDefaultCharsetResultSet()));
@@ -175,15 +191,12 @@ public class SQLSink extends AbstractSink implements Configurable {
                     }
                 } catch (Exception e) {
                     LOG.error("Unable to read flume event", e);
-                } finally {
-                    transaction.close();
                 }
             }
 
             if(bytesRead <= 0) {
-                cbuf[off] = '\r';
-                cbuf[off + 1] = '\n';
-                bytesRead = 2;
+                cbuf[off] = '\n';
+                bytesRead = 1;
             }
 
             return bytesRead;

@@ -5,10 +5,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.hibernate.CacheMode;
-import org.hibernate.Query;
-import org.hibernate.Session;
-import org.hibernate.SessionFactory;
+import org.hibernate.*;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.exception.ConstraintViolationException;
@@ -87,6 +84,70 @@ public class HibernateHelper {
 		factory.close();
 	}
 
+	private void buildQueryValues(Query query, List<String[]> lines)
+	{
+		String[] parameters = query.getNamedParameters();
+		for(String param : parameters) {
+			String[] ids = param.split("_");
+			try {
+				int lineIndex = Integer.parseInt(ids[0].substring(1));
+				int index = Integer.parseInt(ids[1]);
+				query.setString(param, lines.get(lineIndex)[index]);
+			} catch (Exception e) {
+				LOG.error(e.toString());
+			}
+		}
+	}
+
+	private int queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
+		int finishCount = 0;
+
+		LOG.info("queryWithinTable " + tableName + " " + linesWithinTable.size());
+		if(linesWithinTable.size() > 0) {
+			SQLQuery sqlQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
+			buildQueryValues(sqlQuery, linesWithinTable);
+			int queryResult = query(sqlQuery);
+			if (queryResult == 1) {
+				// Create table then retry
+				LOG.warn("Create table " + tableName);
+				if (0 == query(session.createSQLQuery(sqlSinkHelper.buildCreateQuery(linesWithinTable.get(0))))) {
+					queryResult = query(sqlQuery);
+					if (queryResult == 0) finishCount += linesWithinTable.size();
+				}
+			}
+
+			if (queryResult != 0) {
+				int retryCount = 0;
+				if (linesWithinTable.size() > 1) {
+					// Once a half
+					int firstHalf = linesWithinTable.size() / 2;
+					int secondHalf = linesWithinTable.size() - firstHalf;
+					LOG.info("Divide into two halves. First " + firstHalf + " lines");
+					retryCount += queryWithinTable(tableName, linesWithinTable.subList(0, firstHalf));
+					LOG.info("Last " + secondHalf + " lines");
+					retryCount += queryWithinTable(tableName, linesWithinTable.subList(firstHalf, linesWithinTable.size()));
+				} else {
+					if (queryResult == 2) {
+						// Try update
+						LOG.warn("Update data: " + String.join(",", linesWithinTable.get(0)));
+						sqlQuery = session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(tableName, linesWithinTable.get(0)));
+						buildQueryValues(sqlQuery, linesWithinTable.subList(0 , 1));
+						queryResult = query(sqlQuery);
+						if(queryResult == 0) retryCount = 1;
+					}
+
+					if(queryResult != 0) {
+						LOG.error("Data loss: " + String.join(",", linesWithinTable.get(0)));
+					}
+				}
+
+				finishCount += retryCount;
+			}
+		}
+
+		return finishCount;
+	}
+
 	/**
 	 * Execute the selection query in the database
 	 * @return The query result. Each Object is a cell content. <p>
@@ -95,46 +156,35 @@ public class HibernateHelper {
 	 * @throws InterruptedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public boolean executeQuery(List<String[]> lines) throws InterruptedException {
+	public int executeQuery(List<String[]> lines) throws InterruptedException {
 
-		String tableNamePre = "";
 		int finishCount = 0;
-
-		LOG.info("executeQuery");
+		String previosTableName = null;
 		
 		if (!session.isConnected()){
 			resetConnection();
 		}
 
-		for(int i = 0; i < lines.size(); i++) {
-			String tableName = sqlSinkHelper.buildTableName(lines.get(i));
-            int queryResult = query(session.createSQLQuery(sqlSinkHelper.buildInsertQuery(lines.get(i))));
-            if(queryResult == 1) {
-				// Create table then retry
-				LOG.info("Create table " + tableName);
-				if (0 == query(session.createSQLQuery(sqlSinkHelper.buildCreateQuery(tableName)))) {
-					queryResult = query(session.createSQLQuery(sqlSinkHelper.buildInsertQuery(lines.get(i))));
+		List<String[]> linesWithinTable = new ArrayList<>();
+		for(String[] line : lines) {
+
+			String tableName = sqlSinkHelper.buildTableName(line);
+
+			if(!tableName.equals(previosTableName)) {
+				if(previosTableName != null && linesWithinTable.size() > 0) {
+					finishCount += queryWithinTable(previosTableName, linesWithinTable);
+					linesWithinTable.clear();
 				}
-			}
-			else if(queryResult == 2) {
-				// Try update
-				queryResult = query(session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(lines.get(i))));
+				previosTableName = tableName;
 			}
 
-			if(queryResult != 0) {
-            	// TODO: Insert Error
-				LOG.error("Insert Error:" + String.join(",", lines.get(i)));
-			} else {
-				finishCount++;
-			}
+			linesWithinTable.add(line);
+		}
 
-			if(!tableNamePre.equals(tableName)) {
-            	if(tableNamePre.length() > 0) query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableNamePre)));
-				tableNamePre = tableName;
-			}
-        }
-		query(session.createSQLQuery(sqlSinkHelper.buildPostQuery(tableNamePre)));
-		return finishCount > 0;
+		if(linesWithinTable.size() > 0)
+			finishCount += queryWithinTable(previosTableName, linesWithinTable);
+
+		return finishCount;
 	}
 
 	private void resetConnection() throws InterruptedException{
@@ -149,8 +199,8 @@ public class HibernateHelper {
 	}
 
 	private int query(Query query) throws InterruptedException {
-		LOG.info(query.getQueryString());
 		if(query.getQueryString().length() > 0) {
+			LOG.info("Query start");
 			try {
 				query.executeUpdate();
 			} catch (SQLGrammarException e) {
@@ -159,11 +209,15 @@ public class HibernateHelper {
 				return 2;
 			} catch (GenericJDBCException e) {
 				if(e.getErrorCode() == 0) return 0;
+				LOG.error("JDBCException thrown, resetting connection.", e);
+				resetConnection();
 				return -1;
 			} catch (Exception e) {
 				LOG.error("Exception thrown, resetting connection.", e);
 				resetConnection();
 				return -1;
+			} finally {
+				LOG.info("Query end");
 			}
 		}
         return 0;

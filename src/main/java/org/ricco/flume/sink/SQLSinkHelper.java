@@ -31,14 +31,19 @@ public class SQLSinkHelper {
   private static final Logger LOG = LoggerFactory.getLogger(SQLSinkHelper.class);
 
   private int tableTimeColumn;
-  private String connectionURL, tablePrefix,tableFormatter,tableCreate, postQuery,
+  private int batchSize;
+  private String connectionURL, tablePrefix,tableFormatter,tableCreate,
           delimiterEntry, connectionUserName, connectionPassword,
 		defaultCharsetResultSet;
-  private String[] columnsToInsert, keyColumns;
+  private List<String> columnsToInsert = new ArrayList<>();
+  private List<Integer> nonKeyColumnIndexes = new ArrayList<>();
+  private List<Integer> keyColumnIndexes = new ArrayList<>();
+
   private Context context;
 
   private static final String DEFAULT_DELIMITER_ENTRY = ",";
-
+  private static final int DEFAULT_TABLE_TIME_COLUMN = 1;
+  private static final int DEFAULT_BATCH_SIZE = 200;
   private static final String DEFAULT_CHARSET_RESULTSET = "UTF-8";
 
   /**
@@ -48,118 +53,139 @@ public class SQLSinkHelper {
    * @param context    Flume source context, contains the properties from configuration file
    */
   public SQLSinkHelper(Context context) {
-    String timeColumnName = "";
+    String timeColumn;
+    String columnsToInsertString;
+    String keyColumnsString;
 
     this.context = context;
 
     tablePrefix = context.getString("table.prefix");
-    String string = context.getString("columns.to.insert", "");
-    if(string != null && string.length() > 0) columnsToInsert = string.split(",");
-    string = context.getString("key.columns");
-    if(string != null) keyColumns = string.split(",");
-    timeColumnName = context.getString("table.time.column");
+    columnsToInsertString = context.getString("columns.to.insert");
+    batchSize = context.getInteger("batch.size", DEFAULT_BATCH_SIZE);
+    keyColumnsString = context.getString("key.columns");
+    timeColumn = context.getString("table.time.column", String.valueOf(DEFAULT_TABLE_TIME_COLUMN));
     tableFormatter = context.getString("table.formatter");
     tableCreate = context.getString("table.create");
-    postQuery = context.getString("post.query");
     connectionURL = context.getString("hibernate.connection.url");
     connectionUserName = context.getString("hibernate.connection.user");
     connectionPassword = context.getString("hibernate.connection.password");
+    delimiterEntry = context.getString("delimiter.entry", DEFAULT_DELIMITER_ENTRY);
+    defaultCharsetResultSet = context.getString("default.charset.resultset", DEFAULT_CHARSET_RESULTSET);
 
-    if(timeColumnName != null && columnsToInsert != null) {
-        try {
-            tableTimeColumn = Integer.parseInt(timeColumnName);
-        } catch (Exception e){
-            int i = 0;
-            for(String col : columnsToInsert) {
-                i++;
-                if(col.trim().equals(timeColumnName)) {
-                    tableTimeColumn = i;
-                    break;
+    if(columnsToInsertString != null) {
+        String[] columns = columnsToInsertString.split(",");
+        for (int i = 0; i < columns.length; i++) {
+            String columnName = columns[i].trim().toLowerCase();
+            columnsToInsert.add(columnName);
+            if (columnName.length() > 0) {
+                nonKeyColumnIndexes.add(i);
+            }
+        }
+
+        if(nonKeyColumnIndexes.size() > 0) {
+            String[] keyColumns = keyColumnsString.split(",");
+            for (int i = 0; i < keyColumns.length; i++) {
+                String columnName = keyColumns[i].trim().toLowerCase();
+                Integer index = columnsToInsert.indexOf(columnName);
+                if (index >= 0) {
+                    nonKeyColumnIndexes.remove(index);
+                    keyColumnIndexes.add(index);
                 }
             }
         }
     }
 
-    delimiterEntry = context.getString("delimiter.entry", DEFAULT_DELIMITER_ENTRY);
-    defaultCharsetResultSet = context.getString("default.charset.resultset", DEFAULT_CHARSET_RESULTSET);
+    tableTimeColumn = DEFAULT_TABLE_TIME_COLUMN;
+    try {
+        tableTimeColumn = Integer.parseInt(timeColumn);
+    } catch (Exception e){
+        tableTimeColumn = columnsToInsert.indexOf(tableTimeColumn);
+    }
 
     checkMandatoryProperties();
   }
 
-  public String buildTableName(String[] values) {
-      String prefix = tablePrefix;
+  private String buildExpression(String expression, String[] values) {
       try {
-          if (prefix.contains("@") && columnsToInsert != null) {
-              for (int i = columnsToInsert.length; i >= 1; i--) {
+          if (expression.contains("@")) {
+              for (int i = Math.max(values.length, columnsToInsert.size()); i >= 1; i--) {
                   String replacement = i <= values.length ? values[i - 1] : "";
-                  prefix = prefix.replace("@" + i, replacement);
+                  expression = expression.replace("@" + i, replacement);
               }
           }
           if (tableTimeColumn > 0 && tableTimeColumn <= values.length) {
               SimpleDateFormat sdf = new SimpleDateFormat(tableFormatter);
               Date date = sdf.parse(values[tableTimeColumn - 1]);
 
-              if(prefix.contains("#")) prefix = prefix.replace("#", sdf.format(date));
-              else prefix = prefix + sdf.format(date);
+              if(expression.contains("#")) expression = expression.replace("#", sdf.format(date));
+              else expression = expression + sdf.format(date);
           }
       } catch(Exception e) {
           LOG.error("Build table name error :" + e.toString());
           return null;
       }
-      return prefix;
+      return expression;
   }
 
-  public String buildInsertQuery(String[] values) {
-      String columnNames = "";
-      String columnValues = "";
+  public String buildTableName(String[] values) {
+      return buildExpression(tablePrefix, values);
+  }
+
+  public String buildInsertQuery(String tableName, List<String[]> lines) {
+      List<String> columnNames = new ArrayList<>();
+      List<String> valueLines = new ArrayList<>();
       String query = "";
-      for (int i = 0; i < values.length; i++) {
-          String columnName = columnsToInsert == null ? "" : columnsToInsert[i].trim();
-          boolean skip = columnsToInsert != null && columnName.length() <= 0;
-          if (!skip) {
-              if (columnNames.length() > 0) {
-                  columnNames += ",";
-              }
-              if (columnValues.length() > 0) {
-                  columnValues += ",";
-              }
-              columnNames += columnName;
-              columnValues += "'" + values[i] + "'";
+
+      for(int index : keyColumnIndexes) {
+          columnNames.add(columnsToInsert.get(index));
+      }
+      for(int index : nonKeyColumnIndexes) {
+          columnNames.add(columnsToInsert.get(index));
+      }
+
+      for(int j = 0; j < lines.size(); j++) {
+          String[] values  = lines.get(j);
+          List<String> insertValues = new ArrayList<>();
+
+          for(int index : keyColumnIndexes) {
+              if(index < values.length) insertValues.add(":v" + j + "_" + index);
+              else insertValues.add("null");
           }
+          for(int index : nonKeyColumnIndexes) {
+              if(index < values.length) insertValues.add(":v" + j + "_" + index);
+              else insertValues.add("null");
+          }
+
+          valueLines.add(String.join(",", insertValues));
       }
-      if (columnNames.length() > 0) {
-          columnNames = "(" + columnNames + ")";
-      }
-      if(columnValues.length() > 0) {
-          query = "insert into " + buildTableName(values) + columnNames + " values (" + columnValues + ")";
+
+      String columnString = columnNames.size() > 0 ? "(" + String.join(",", columnNames) + ")" : "";
+      if (valueLines.size() > 0) {
+          query = "insert into " + tableName + columnString + " values (" + String.join("),(", valueLines) + ")";
       }
       return query;
   }
 
-  public String buildCreateQuery(String tableName) {
-      return tableCreate.replace("@", tableName);
+  public String buildCreateQuery(String[] values) {
+      return buildExpression(tableCreate, values);
   }
 
-  public String buildUpdateQuery(String[] values) {
+  public String buildUpdateQuery(String tableName, String[] values) {
       List<String> set = new ArrayList<>();
       List<String> where = new ArrayList<>();
-      for(int i = 0; i < values.length && i < columnsToInsert.length; i++) {
-          String columnName = columnsToInsert[i].trim();
 
-          if(values[i].length() > 0 && columnName.length() > 0) {
-              if(Arrays.asList(keyColumns).contains(columnName)) {
-                  where.add(columnName + "='" + values[i] + "'");
-              } else {
-                  set.add(columnName + "='" + values[i] + "'");
-              }
-          }
+      for(int index : nonKeyColumnIndexes) {
+          if(index < values.length)
+              set.add(columnsToInsert.get(index) + "=:v0_" + index);
       }
-      if(where.size() <= 0 || set.size() <= 0) return "";
-      return "update " + buildTableName(values) + " set " + String.join(",", set) + " where " + String.join(" and ", where);
-  }
 
-  public String buildPostQuery(String tableName) {
-      return postQuery.replace("@", tableName);
+      for(int index : keyColumnIndexes) {
+          if(index < values.length)
+              where.add(columnsToInsert.get(index) + "=:v0_" + index);
+      }
+
+      if(where.size() <= 0 || set.size() <= 0) return "";
+      return "update " + tableName + " set " + String.join(",", set) + " where " + String.join(" and ", where);
   }
 
   /**
@@ -204,7 +230,7 @@ public class SQLSinkHelper {
       throw new ConfigurationException("property table prefix not set");
     }
 
-    if(tablePrefix.contains("@") && (columnsToInsert == null || columnsToInsert.length <= 0)) {
+    if(tablePrefix.contains("@") && keyColumnIndexes.size() + nonKeyColumnIndexes.size() <= 0) {
         throw new ConfigurationException("property column to insert not set");
     }
 
@@ -223,6 +249,10 @@ public class SQLSinkHelper {
     if (connectionPassword == null) {
       throw new ConfigurationException("hibernate.connection.password property not set");
     }
+  }
+
+  int getBatchSize() {
+      return batchSize;
   }
 
   String getConnectionURL() {
