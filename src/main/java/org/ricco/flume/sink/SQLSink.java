@@ -121,8 +121,12 @@ public class SQLSink extends AbstractSink implements Configurable {
             }
         }
 
-        if(saveCount <= 0) transaction.rollback();
-        else transaction.commit();
+        //if(saveCount <= 0) {
+        //    LOG.info("Sinking rollback " + lines.size() + " lines");
+        //    transaction.rollback();
+        //}
+        //else
+        transaction.commit();
 
         transaction.close();
 

@@ -42,7 +42,8 @@ public class SQLSinkHelper {
   private Context context;
 
   private static final String DEFAULT_DELIMITER_ENTRY = ",";
-  private static final int DEFAULT_TABLE_TIME_COLUMN = 1;
+  private static final int DEFAULT_TABLE_TIME_COLUMN = 0;
+  private static final String DEFAULT_TABLE_TIME_FORMATTER = "yyyy";
   private static final int DEFAULT_BATCH_SIZE = 200;
   private static final String DEFAULT_CHARSET_RESULTSET = "UTF-8";
 
@@ -64,7 +65,7 @@ public class SQLSinkHelper {
     batchSize = context.getInteger("batch.size", DEFAULT_BATCH_SIZE);
     keyColumnsString = context.getString("key.columns");
     timeColumn = context.getString("table.time.column", String.valueOf(DEFAULT_TABLE_TIME_COLUMN));
-    tableFormatter = context.getString("table.formatter");
+    tableFormatter = context.getString("table.formatter", DEFAULT_TABLE_TIME_FORMATTER);
     tableCreate = context.getString("table.create");
     connectionURL = context.getString("hibernate.connection.url");
     connectionUserName = context.getString("hibernate.connection.user");
@@ -82,7 +83,7 @@ public class SQLSinkHelper {
             }
         }
 
-        if(nonKeyColumnIndexes.size() > 0) {
+        if(nonKeyColumnIndexes.size() > 0 && keyColumnsString != null) {
             String[] keyColumns = keyColumnsString.split(",");
             for (int i = 0; i < keyColumns.length; i++) {
                 String columnName = keyColumns[i].trim().toLowerCase();
@@ -113,12 +114,11 @@ public class SQLSinkHelper {
                   expression = expression.replace("@" + i, replacement);
               }
           }
-          if (tableTimeColumn > 0 && tableTimeColumn <= values.length) {
+          if (tableTimeColumn > 0 && tableTimeColumn <= values.length && expression.contains("#")) {
               SimpleDateFormat sdf = new SimpleDateFormat(tableFormatter);
               Date date = sdf.parse(values[tableTimeColumn - 1]);
 
-              if(expression.contains("#")) expression = expression.replace("#", sdf.format(date));
-              else expression = expression + sdf.format(date);
+              expression = expression.replace("#", sdf.format(date));
           }
       } catch(Exception e) {
           LOG.error("Build table name error :" + e.toString());
@@ -234,12 +234,8 @@ public class SQLSinkHelper {
         throw new ConfigurationException("property column to insert not set");
     }
 
-    if(tableFormatter != null && tableTimeColumn <= 0) {
+    if(tableFormatter != null && tableFormatter.contains("#") && tableTimeColumn <= 0) {
         throw new ConfigurationException("property table time column not set");
-    }
-
-    if(tableFormatter == null && tableTimeColumn > 0) {
-        throw new ConfigurationException("property table formatter not set");
     }
 
     if (connectionUserName == null) {
