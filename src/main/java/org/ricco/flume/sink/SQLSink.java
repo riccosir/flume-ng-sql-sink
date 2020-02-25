@@ -111,21 +111,15 @@ public class SQLSink extends AbstractSink implements Configurable {
             }
         } while (line[0].length() > 0 && lines.size() < sqlSinkHelper.getBatchSize());
 
-        int saveCount = 0;
         if(lines.size() > 0) {
             LOG.info("Sinking " + lines.size() + " lines");
 
             try {
-                saveCount = hibernateHelper.executeQuery(lines);
+                hibernateHelper.executeQuery(lines);
             } catch(Exception e) {
             }
         }
 
-        //if(saveCount <= 0) {
-        //    LOG.info("Sinking rollback " + lines.size() + " lines");
-        //    transaction.rollback();
-        //}
-        //else
         transaction.commit();
 
         transaction.close();

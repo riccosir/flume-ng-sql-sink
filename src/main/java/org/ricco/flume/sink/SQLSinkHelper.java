@@ -131,7 +131,7 @@ public class SQLSinkHelper {
       return buildExpression(tablePrefix, values);
   }
 
-  public String buildInsertQuery(String tableName, List<String[]> lines) {
+  public String buildInsertQuery(List<String[]> lines) {
       List<String> columnNames = new ArrayList<>();
       List<String> valueLines = new ArrayList<>();
       String query = "";
@@ -161,7 +161,7 @@ public class SQLSinkHelper {
 
       String columnString = columnNames.size() > 0 ? "(" + String.join(",", columnNames) + ")" : "";
       if (valueLines.size() > 0) {
-          query = "insert into " + tableName + columnString + " values (" + String.join("),(", valueLines) + ")";
+          query = "select identity(int,1,1),* into #insert from ( values (" + String.join("),(", valueLines) + ")) as (" + columnString + ")";
       }
       return query;
   }
@@ -170,9 +170,11 @@ public class SQLSinkHelper {
       return buildExpression(tableCreate, values);
   }
 
-  public String buildUpdateQuery(String tableName, String[] values) {
+  public String buildUpdateQuery(String tableName, List<String[]> lines) {
       List<String> set = new ArrayList<>();
       List<String> where = new ArrayList<>();
+
+      String[] values = lines.get(0);
 
       for(int index : nonKeyColumnIndexes) {
           if(index < values.length)

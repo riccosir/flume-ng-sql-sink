@@ -99,66 +99,46 @@ public class HibernateHelper {
 		}
 	}
 
-	private int queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
-		int finishCount = 0;
-
+	private void queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
 		LOG.info("queryWithinTable " + tableName + " " + linesWithinTable.size());
 		if(linesWithinTable.size() > 0) {
-			SQLQuery sqlQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
-			buildQueryValues(sqlQuery, linesWithinTable);
-			int queryResult = query(sqlQuery);
-			if (queryResult == 1) {
-				// Create table then retry
-				LOG.warn("Create table " + tableName);
-				if (0 == query(session.createSQLQuery(sqlSinkHelper.buildCreateQuery(linesWithinTable.get(0))))) {
-					queryResult = query(sqlQuery);
-					if (queryResult == 0) finishCount += linesWithinTable.size();
-				}
-			}
+			SQLQuery insertQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
+			buildQueryValues(insertQuery, linesWithinTable);
+			int queryResult = query(insertQuery);
 
-			if (queryResult != 0) {
-				int retryCount = 0;
-				if (linesWithinTable.size() > 1) {
-					// Once a half
-					int firstHalf = linesWithinTable.size() / 2;
-					int secondHalf = linesWithinTable.size() - firstHalf;
-					LOG.info("Divide into two halves. First " + firstHalf + " lines");
-					retryCount += queryWithinTable(tableName, linesWithinTable.subList(0, firstHalf));
-					LOG.info("Last " + secondHalf + " lines");
-					retryCount += queryWithinTable(tableName, linesWithinTable.subList(firstHalf, linesWithinTable.size()));
-				} else {
-					if (queryResult == 2) {
-						// Try update
-						LOG.warn("Update data: " + String.join(",", linesWithinTable.get(0)));
-						sqlQuery = session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(tableName, linesWithinTable.get(0)));
-						buildQueryValues(sqlQuery, linesWithinTable.subList(0 , 1));
-						queryResult = query(sqlQuery);
-						if(queryResult == 0) retryCount = 1;
-					}
-
-					if(queryResult != 0) {
-						LOG.error("Data loss: " + String.join(",", linesWithinTable.get(0)));
+			if(queryResult > 0) {
+				SQLQuery updateQuery = null;
+				if (queryResult == 1) {
+					// Create table
+					String createString = sqlSinkHelper.buildCreateQuery(linesWithinTable.get(0));
+					if (createString != null) {
+						LOG.warn("Create table " + tableName);
+						updateQuery = session.createSQLQuery(createString);
 					}
 				}
 
-				finishCount += retryCount;
+				if (queryResult == 2) {
+					LOG.warn("Remove duplicates");
+					updateQuery = session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(tableName, linesWithinTable));
+					buildQueryValues(updateQuery, linesWithinTable);
+				}
+
+				if(updateQuery != null && 0 == query(updateQuery)) {
+					query(insertQuery);
+				}
 			}
 		}
-
-		return finishCount;
 	}
 
 	/**
 	 * Execute the selection query in the database
-	 * @return The query result. Each Object is a cell content. <p>
 	 * The cell contents use database types (date,int,string...), 
 	 * keep in mind in case of future conversions/castings.
 	 * @throws InterruptedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public int executeQuery(List<String[]> lines) throws InterruptedException {
+	public void executeQuery(List<String[]> lines) throws InterruptedException {
 
-		int finishCount = 0;
 		String previosTableName = null;
 		
 		if (!session.isConnected()){
@@ -172,7 +152,7 @@ public class HibernateHelper {
 
 			if(!tableName.equals(previosTableName)) {
 				if(previosTableName != null && linesWithinTable.size() > 0) {
-					finishCount += queryWithinTable(previosTableName, linesWithinTable);
+					queryWithinTable(previosTableName, linesWithinTable);
 					linesWithinTable.clear();
 				}
 				previosTableName = tableName;
@@ -182,12 +162,10 @@ public class HibernateHelper {
 		}
 
 		if(linesWithinTable.size() > 0)
-			finishCount += queryWithinTable(previosTableName, linesWithinTable);
-
-		return finishCount;
+			queryWithinTable(previosTableName, linesWithinTable);
 	}
 
-	private void resetConnection() throws InterruptedException{
+	private void resetConnection() {
 		LOG.info("resetConnection");
 		if(session.isOpen()){
 			session.close();
