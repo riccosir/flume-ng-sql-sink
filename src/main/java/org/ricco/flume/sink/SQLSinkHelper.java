@@ -131,7 +131,7 @@ public class SQLSinkHelper {
       return buildExpression(tablePrefix, values);
   }
 
-  public String buildInsertQuery(List<String[]> lines) {
+  public String buildInsertQuery(String tableName, List<String[]> lines) {
       List<String> columnNames = new ArrayList<>();
       List<String> valueLines = new ArrayList<>();
       String query = "";
@@ -161,33 +161,9 @@ public class SQLSinkHelper {
 
       String columnString = columnNames.size() > 0 ? "(" + String.join(",", columnNames) + ")" : "";
       if (valueLines.size() > 0) {
-          query = "select identity(int,1,1),* into #insert from ( values (" + String.join("),(", valueLines) + ")) as (" + columnString + ")";
+          query = "insert into " + tableName + columnString + " values (" + String.join("),(", valueLines) + ")";
       }
       return query;
-  }
-
-  public String buildCreateQuery(String[] values) {
-      return buildExpression(tableCreate, values);
-  }
-
-  public String buildUpdateQuery(String tableName, List<String[]> lines) {
-      List<String> set = new ArrayList<>();
-      List<String> where = new ArrayList<>();
-
-      String[] values = lines.get(0);
-
-      for(int index : nonKeyColumnIndexes) {
-          if(index < values.length)
-              set.add(columnsToInsert.get(index) + "=:v0_" + index);
-      }
-
-      for(int index : keyColumnIndexes) {
-          if(index < values.length)
-              where.add(columnsToInsert.get(index) + "=:v0_" + index);
-      }
-
-      if(where.size() <= 0 || set.size() <= 0) return "";
-      return "update " + tableName + " set " + String.join(",", set) + " where " + String.join(" and ", where);
   }
 
   /**

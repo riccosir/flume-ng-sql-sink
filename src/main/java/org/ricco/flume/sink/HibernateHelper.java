@@ -12,10 +12,14 @@ import org.hibernate.exception.ConstraintViolationException;
 import org.hibernate.exception.GenericJDBCException;
 import org.hibernate.exception.SQLGrammarException;
 import org.hibernate.service.ServiceRegistry;
-import org.hibernate.transform.Transformers;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.flume.Context;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 
 /**
  * Helper class to manage hibernate sessions and perform queries
@@ -84,63 +88,18 @@ public class HibernateHelper {
 		factory.close();
 	}
 
-	private void buildQueryValues(Query query, List<String[]> lines)
-	{
-		String[] parameters = query.getNamedParameters();
-		for(String param : parameters) {
-			String[] ids = param.split("_");
-			try {
-				int lineIndex = Integer.parseInt(ids[0].substring(1));
-				int index = Integer.parseInt(ids[1]);
-				query.setString(param, lines.get(lineIndex)[index]);
-			} catch (Exception e) {
-				LOG.error(e.toString());
-			}
-		}
-	}
-
-	private void queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
-		LOG.info("queryWithinTable " + tableName + " " + linesWithinTable.size());
-		if(linesWithinTable.size() > 0) {
-			SQLQuery insertQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
-			buildQueryValues(insertQuery, linesWithinTable);
-			int queryResult = query(insertQuery);
-
-			if(queryResult > 0) {
-				SQLQuery updateQuery = null;
-				if (queryResult == 1) {
-					// Create table
-					String createString = sqlSinkHelper.buildCreateQuery(linesWithinTable.get(0));
-					if (createString != null) {
-						LOG.warn("Create table " + tableName);
-						updateQuery = session.createSQLQuery(createString);
-					}
-				}
-
-				if (queryResult == 2) {
-					LOG.warn("Remove duplicates");
-					updateQuery = session.createSQLQuery(sqlSinkHelper.buildUpdateQuery(tableName, linesWithinTable));
-					buildQueryValues(updateQuery, linesWithinTable);
-				}
-
-				if(updateQuery != null && 0 == query(updateQuery)) {
-					query(insertQuery);
-				}
-			}
-		}
-	}
 
 	/**
 	 * Execute the selection query in the database
-	 * The cell contents use database types (date,int,string...), 
+	 * The cell contents use database types (date,int,string...),
 	 * keep in mind in case of future conversions/castings.
-	 * @throws InterruptedException 
+	 * @throws InterruptedException
 	 */
 	@SuppressWarnings("unchecked")
 	public void executeQuery(List<String[]> lines) throws InterruptedException {
 
 		String previosTableName = null;
-		
+
 		if (!session.isConnected()){
 			resetConnection();
 		}
@@ -165,6 +124,35 @@ public class HibernateHelper {
 			queryWithinTable(previosTableName, linesWithinTable);
 	}
 
+	private void buildQueryValues(Query query, List<String[]> lines)
+	{
+		String[] parameters = query.getNamedParameters();
+		for(String param : parameters) {
+			String[] ids = param.split("_");
+			try {
+				int lineIndex = Integer.parseInt(ids[0].substring(1));
+				int index = Integer.parseInt(ids[1]);
+				query.setString(param, lines.get(lineIndex)[index]);
+			} catch (Exception e) {
+				LOG.error(e.toString());
+			}
+		}
+	}
+
+	private void queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
+		LOG.info("queryWithinTable " + tableName + " " + linesWithinTable.size());
+		if(linesWithinTable.size() > 0) {
+			SQLQuery sqlQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
+			buildQueryValues(sqlQuery, linesWithinTable);
+			int queryResult = query(sqlQuery);
+
+			if (queryResult != 0) {
+				for(int i = 0; i < linesWithinTable.size(); i++)
+					LOG.warn("Data loss: " + String.join(",", linesWithinTable.get(i)));
+			}
+		}
+	}
+
 	private void resetConnection() {
 		LOG.info("resetConnection");
 		if(session.isOpen()){
@@ -173,7 +161,6 @@ public class HibernateHelper {
 		} else {
 			establishSession();
 		}
-		
 	}
 
 	private int query(Query query) throws InterruptedException {
@@ -198,6 +185,6 @@ public class HibernateHelper {
 				LOG.info("Query end");
 			}
 		}
-        return 0;
-    }
+		return 0;
+	}
 }
