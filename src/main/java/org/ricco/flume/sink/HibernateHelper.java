@@ -1,17 +1,12 @@
 package org.ricco.flume.sink;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.hibernate.*;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.cfg.Configuration;
-import org.hibernate.exception.ConstraintViolationException;
-import org.hibernate.exception.GenericJDBCException;
-import org.hibernate.exception.SQLGrammarException;
 import org.hibernate.service.ServiceRegistry;
+import org.hibernate.jdbc.Work;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,59 +93,47 @@ public class HibernateHelper {
 	@SuppressWarnings("unchecked")
 	public void executeQuery(List<String[]> lines) throws InterruptedException {
 
-		String previosTableName = null;
-
 		if (!session.isConnected()){
 			resetConnection();
 		}
 
-		List<String[]> linesWithinTable = new ArrayList<>();
+		Map<String,List<String[]>> linesMap = new HashMap<>();
 		for(String[] line : lines) {
+            List<String[]> linesWithinTable;
 
 			String tableName = sqlSinkHelper.buildTableName(line);
-
-			if(!tableName.equals(previosTableName)) {
-				if(previosTableName != null && linesWithinTable.size() > 0) {
-					queryWithinTable(previosTableName, linesWithinTable);
-					linesWithinTable.clear();
-				}
-				previosTableName = tableName;
-			}
+			if(linesMap.containsKey(tableName)) {
+                linesWithinTable = linesMap.get(tableName);
+            } else {
+                linesWithinTable = new ArrayList<>();
+                linesMap.put(tableName, linesWithinTable);
+            }
 
 			linesWithinTable.add(line);
 		}
 
-		if(linesWithinTable.size() > 0)
-			queryWithinTable(previosTableName, linesWithinTable);
-	}
+        for (String table : linesMap.keySet()) {
+            Transaction tx = null;
+            try {
+                LOG.info("Begin transaction " + linesMap.get(table).size() + " lines of " + table);
 
-	private void buildQueryValues(Query query, List<String[]> lines)
-	{
-		String[] parameters = query.getNamedParameters();
-		for(String param : parameters) {
-			String[] ids = param.split("_");
-			try {
-				int lineIndex = Integer.parseInt(ids[0].substring(1));
-				int index = Integer.parseInt(ids[1]);
-				query.setString(param, lines.get(lineIndex)[index]);
-			} catch (Exception e) {
-				LOG.error(e.toString());
-			}
-		}
-	}
+                tx = session.beginTransaction();
 
-	private void queryWithinTable(String tableName, List<String[]> linesWithinTable) throws InterruptedException {
-		LOG.info("queryWithinTable " + tableName + " " + linesWithinTable.size());
-		if(linesWithinTable.size() > 0) {
-			SQLQuery sqlQuery = session.createSQLQuery(sqlSinkHelper.buildInsertQuery(tableName,linesWithinTable));
-			buildQueryValues(sqlQuery, linesWithinTable);
-			int queryResult = query(sqlQuery);
+                session.doWork(new TableWork(table, linesMap.get(table)));
 
-			if (queryResult != 0) {
-				for(int i = 0; i < linesWithinTable.size(); i++)
-					LOG.warn("Data loss: " + String.join(",", linesWithinTable.get(i)));
-			}
-		}
+                tx.commit();
+                LOG.info("Commit transaction " + table);
+            } catch (Exception e) {
+                LOG.warn(table + " lost " + linesMap.get(table).size() + " record(s).");
+                LOG.warn("First record: " + String.join(",", linesMap.get(table).get(0)));
+                if (tx != null) {
+                    tx.rollback();
+                }
+            } finally {
+                //sess.close();
+                //sf.close();
+            }
+        }
 	}
 
 	private void resetConnection() {
@@ -163,28 +146,33 @@ public class HibernateHelper {
 		}
 	}
 
-	private int query(Query query) throws InterruptedException {
-		if(query.getQueryString().length() > 0) {
-			LOG.info("Query start");
-			try {
-				query.executeUpdate();
-			} catch (SQLGrammarException e) {
-				return 1;
-			} catch (ConstraintViolationException e) {
-				return 2;
-			} catch (GenericJDBCException e) {
-				if(e.getErrorCode() == 0) return 0;
-				LOG.error("JDBCException thrown, resetting connection.", e);
-				resetConnection();
-				return -1;
-			} catch (Exception e) {
-				LOG.error("Exception thrown, resetting connection.", e);
-				resetConnection();
-				return -1;
-			} finally {
-				LOG.info("Query end");
-			}
-		}
-		return 0;
-	}
+    private class TableWork implements Work{
+	    private String tableName;
+	    private List<String[]> linesWithinTable;
+
+        public TableWork(String tableName, List<String[]> linesWithinTable) {
+            this.tableName = tableName;
+            this.linesWithinTable = linesWithinTable;
+        }
+
+        @Override
+        public void execute(Connection arg0) throws SQLException {//需要注意的是，不需要调用close()方法关闭这个连接
+            //通过JDBC API执行用于批量插入的sql语句;
+            List<Integer> paramIndexes = new ArrayList<>();
+            String sql = sqlSinkHelper.buildInsertQuery(tableName, paramIndexes);
+            PreparedStatement ps = arg0.prepareStatement(sql);
+
+            for (String[] line : linesWithinTable) {
+                for (int i = 0; i < paramIndexes.size(); i++) {
+                    if (line.length > paramIndexes.get(i))
+                        ps.setString(i + 1, line[paramIndexes.get(i)]);
+                    else ps.setString(i + 1, "");
+                }
+
+                ps.addBatch();
+            }
+
+            ps.executeBatch();
+        }
+    }
 }

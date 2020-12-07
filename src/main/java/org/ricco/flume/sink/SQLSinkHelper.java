@@ -5,7 +5,6 @@ import java.util.*;
 
 import org.apache.flume.conf.ConfigurationException;
 import org.apache.flume.Context;
-import org.joda.time.DateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,19 +31,20 @@ public class SQLSinkHelper {
 
   private int tableTimeColumn;
   private int batchSize;
-  private String connectionURL, tablePrefix,tableFormatter,tableCreate,
+  private int maxDuration;
+  private String connectionURL, tablePrefix,tableFormatter,
           delimiterEntry, connectionUserName, connectionPassword,
 		defaultCharsetResultSet;
   private List<String> columnsToInsert = new ArrayList<>();
-  private List<Integer> nonKeyColumnIndexes = new ArrayList<>();
-  private List<Integer> keyColumnIndexes = new ArrayList<>();
+  private List<Integer> columnIndexes = new ArrayList<>();
 
   private Context context;
 
   private static final String DEFAULT_DELIMITER_ENTRY = ",";
   private static final int DEFAULT_TABLE_TIME_COLUMN = 0;
   private static final String DEFAULT_TABLE_TIME_FORMATTER = "yyyy";
-  private static final int DEFAULT_BATCH_SIZE = 200;
+  private static final int DEFAULT_BATCH_SIZE = 10000;
+  private static final int DEFAULT_MAX_DURATION = 0;
   private static final String DEFAULT_CHARSET_RESULTSET = "UTF-8";
 
   /**
@@ -56,17 +56,15 @@ public class SQLSinkHelper {
   public SQLSinkHelper(Context context) {
     String timeColumn;
     String columnsToInsertString;
-    String keyColumnsString;
 
     this.context = context;
 
     tablePrefix = context.getString("table.prefix");
     columnsToInsertString = context.getString("columns.to.insert");
     batchSize = context.getInteger("batch.size", DEFAULT_BATCH_SIZE);
-    keyColumnsString = context.getString("key.columns");
+    maxDuration = context.getInteger("max.duration", DEFAULT_MAX_DURATION);
     timeColumn = context.getString("table.time.column", String.valueOf(DEFAULT_TABLE_TIME_COLUMN));
     tableFormatter = context.getString("table.formatter", DEFAULT_TABLE_TIME_FORMATTER);
-    tableCreate = context.getString("table.create");
     connectionURL = context.getString("hibernate.connection.url");
     connectionUserName = context.getString("hibernate.connection.user");
     connectionPassword = context.getString("hibernate.connection.password");
@@ -77,21 +75,9 @@ public class SQLSinkHelper {
         String[] columns = columnsToInsertString.split(",");
         for (int i = 0; i < columns.length; i++) {
             String columnName = columns[i].trim().toLowerCase();
-            columnsToInsert.add(columnName);
             if (columnName.length() > 0) {
-                nonKeyColumnIndexes.add(i);
-            }
-        }
-
-        if(nonKeyColumnIndexes.size() > 0 && keyColumnsString != null) {
-            String[] keyColumns = keyColumnsString.split(",");
-            for (int i = 0; i < keyColumns.length; i++) {
-                String columnName = keyColumns[i].trim().toLowerCase();
-                Integer index = columnsToInsert.indexOf(columnName);
-                if (index >= 0) {
-                    nonKeyColumnIndexes.remove(index);
-                    keyColumnIndexes.add(index);
-                }
+                columnsToInsert.add(columnName);
+                columnIndexes.add(i);
             }
         }
     }
@@ -131,38 +117,22 @@ public class SQLSinkHelper {
       return buildExpression(tablePrefix, values);
   }
 
-  public String buildInsertQuery(String tableName, List<String[]> lines) {
-      List<String> columnNames = new ArrayList<>();
-      List<String> valueLines = new ArrayList<>();
+  public String buildInsertQuery(String tableName, List<Integer> paramArray) {
       String query = "";
-
-      for(int index : keyColumnIndexes) {
-          columnNames.add(columnsToInsert.get(index));
-      }
-      for(int index : nonKeyColumnIndexes) {
-          columnNames.add(columnsToInsert.get(index));
+      List<String> insertValues = new ArrayList<>();
+      for(int index : columnIndexes) {
+          paramArray.add(index);
+          insertValues.add("?");
       }
 
-      for(int j = 0; j < lines.size(); j++) {
-          String[] values  = lines.get(j);
-          List<String> insertValues = new ArrayList<>();
+      query = "insert into " +
+              tableName +
+              "(" +
+              String.join(",", columnsToInsert) +
+              ") values (" +
+              String.join(",", insertValues) +
+              ")";
 
-          for(int index : keyColumnIndexes) {
-              if(index < values.length) insertValues.add(":v" + j + "_" + index);
-              else insertValues.add("null");
-          }
-          for(int index : nonKeyColumnIndexes) {
-              if(index < values.length) insertValues.add(":v" + j + "_" + index);
-              else insertValues.add("null");
-          }
-
-          valueLines.add(String.join(",", insertValues));
-      }
-
-      String columnString = columnNames.size() > 0 ? "(" + String.join(",", columnNames) + ")" : "";
-      if (valueLines.size() > 0) {
-          query = "insert into " + tableName + columnString + " values (" + String.join("),(", valueLines) + ")";
-      }
       return query;
   }
 
@@ -208,7 +178,7 @@ public class SQLSinkHelper {
       throw new ConfigurationException("property table prefix not set");
     }
 
-    if(tablePrefix.contains("@") && keyColumnIndexes.size() + nonKeyColumnIndexes.size() <= 0) {
+    if(columnIndexes.size() <= 0) {
         throw new ConfigurationException("property column to insert not set");
     }
 
@@ -227,6 +197,10 @@ public class SQLSinkHelper {
 
   int getBatchSize() {
       return batchSize;
+  }
+
+  int getMaxDuration() {
+      return maxDuration;
   }
 
   String getConnectionURL() {

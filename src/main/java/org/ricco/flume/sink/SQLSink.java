@@ -20,19 +20,14 @@ package org.ricco.flume.sink;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.apache.flume.Channel;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
-import org.apache.flume.event.SimpleEvent;
 import org.apache.flume.sink.AbstractSink;
 import org.ricco.flume.metrics.SqlSinkCounter;
 import org.slf4j.Logger;
@@ -56,6 +51,7 @@ public class SQLSink extends AbstractSink implements Configurable {
     private SqlSinkCounter sqlSinkCounter;
     private CSVReader csvReader;
     private HibernateHelper hibernateHelper;
+    private int autoBatchDuration = 0;
        
     /**
      * Configure the source, load configuration properties and establish connection with database
@@ -87,7 +83,7 @@ public class SQLSink extends AbstractSink implements Configurable {
      */
 	@Override
 	public Status process() {
-        //sqlSinkCounter.startProcess();
+
         Status status = Status.READY;
 
         List<String[]> lines = new ArrayList<>();
@@ -112,17 +108,39 @@ public class SQLSink extends AbstractSink implements Configurable {
         } while (line[0].length() > 0 && lines.size() < sqlSinkHelper.getBatchSize());
 
         if(lines.size() > 0) {
-            LOG.info("Sinking " + lines.size() + " lines");
+            LOG.info(lines.size() + " lines till " + String.join(",", lines.get(lines.size() - 1)));
 
             try {
                 hibernateHelper.executeQuery(lines);
             } catch(Exception e) {
+                LOG.error("executeQuery error " + lines.size() + " lines");
             }
         }
 
         transaction.commit();
-
         transaction.close();
+
+        if(lines.size() > 0) {
+
+            if(lines.size() >= sqlSinkHelper.getBatchSize()) {
+                autoBatchDuration = 0;
+            } else if (sqlSinkHelper.getBatchSize() > 0 && sqlSinkHelper.getMaxDuration() > 0) {
+                double percent = 1.0 - lines.size() * 1.0 / sqlSinkHelper.getBatchSize();
+                if (percent >= 0.5)
+                    autoBatchDuration = (int) (sqlSinkHelper.getMaxDuration() * percent);
+            }
+
+            if (autoBatchDuration > 0) {
+                try {
+
+                    LOG.info("Wait for " + autoBatchDuration + " milliseconds");
+                    Thread.sleep(autoBatchDuration);
+
+                } catch (Exception e) {
+
+                }
+            }
+        }
 
         return status;
 	}
@@ -167,7 +185,6 @@ public class SQLSink extends AbstractSink implements Configurable {
             int bytesRead = 0;
 
             if(remainBytes.length > 0) {
-                LOG.info("ChannelReader.remainBytes" + remainBytes);
                 bytesRead = len - off >= remainBytes.length ? remainBytes.length : len - off;
                 System.arraycopy(remainBytes, 0, cbuf, off, bytesRead);
                 if(bytesRead < remainBytes.length) {

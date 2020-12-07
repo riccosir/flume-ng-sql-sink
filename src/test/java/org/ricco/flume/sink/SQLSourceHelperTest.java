@@ -30,7 +30,7 @@ public class SQLSourceHelperTest {
 
 		when(context.getString("hibernate.connection.url")).thenReturn("jdbc:mysql://host:3306/database");
         when(context.getString("table.prefix")).thenReturn("sink");
-		when(context.getString("columns.to.insert", "*")).thenReturn("a,b,c");
+		when(context.getString("columns.to.insert")).thenReturn("a,b,c");
 		when(context.getString("hibernate.connection.user")).thenReturn("user");
 		when(context.getString("hibernate.connection.password")).thenReturn("password");
 	}
