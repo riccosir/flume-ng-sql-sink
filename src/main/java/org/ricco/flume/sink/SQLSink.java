@@ -199,7 +199,7 @@ public class SQLSink extends AbstractSink implements Configurable {
 
                     if (event != null) {
                         String body = new String(event.getBody(), Charset.forName(sqlSinkHelper.getDefaultCharsetResultSet()));
-                        body += "\r\n";
+                        body = body.trim() + "\r\n";
                         bytesRead = len - off >= body.length() ? body.length() : len - off;
                         System.arraycopy(body.toCharArray(), 0, cbuf, off, bytesRead);
                         remainBytes = body.substring(bytesRead).toCharArray();
