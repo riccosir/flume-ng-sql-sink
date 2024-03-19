@@ -12,15 +12,15 @@ import org.slf4j.LoggerFactory;
  * Helper to manage configuration parameters and utility methods <p>
  * <p>
  * Configuration parameters readed from flume configuration file:
- * <tt>type: </tt> org.keedio.flume.source.SQLSink <p>
- * <tt>tablePrefix: </tt> tablePrefix to read from <p>
- * <tt>columns.to.select: </tt> columns to select for import data (* will import all) <p>
- * <tt>run.query.delay: </tt> delay time to execute each query to database <p>
- * <tt>status.file.path: </tt> Directory to save status file <p>
- * <tt>status.file.name: </tt> Name for status file (saves last row index processed) <p>
- * <tt>batch.size: </tt> Batch size to send events from flume source to flume channel <p>
- * <tt>max.rows: </tt> Max rows to import from DB in one query <p>
- * <tt>custom.query: </tt> Custom query to execute to database (be careful) <p>
+ * <code>type: </code> org.keedio.flume.source.SQLSink <p>
+ * <code>tablePrefix: </code> tablePrefix to read from <p>
+ * <code>columns.to.select: </code> columns to select for import data (* will import all) <p>
+ * <code>run.query.delay: </code> delay time to execute each query to database <p>
+ * <code>status.file.path: </code> Directory to save status file <p>
+ * <code>status.file.name: </code> Name for status file (saves last row index processed) <p>
+ * <code>batch.size: </code> Batch size to send events from flume source to flume channel <p>
+ * <code>max.rows: </code> Max rows to import from DB in one query <p>
+ * <code>custom.query: </code> Custom query to execute to database (be careful) <p>
  *
  * @author <a href="mailto:ricco@qq.com">Ricco</a>
  */
