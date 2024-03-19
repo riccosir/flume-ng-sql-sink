@@ -3,6 +3,10 @@ flume-ng-sql-sink(Under development)
 
 This project is used for [flume-ng](https://github.com/apache/flume) to communicate with sql databases
 
+Tested working with:
+  - Java 11
+  - Flume 1.11.0
+
 Current sql database engines supported
 -------------------------------
 - After the last update the code has been integrated with hibernate, so all databases supported by this technology should work.
