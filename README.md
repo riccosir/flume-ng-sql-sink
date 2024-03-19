@@ -3,6 +3,10 @@ flume-ng-sql-sink(Under development)
 
 This project is used for [flume-ng](https://github.com/apache/flume) to communicate with sql databases
 
+Tested working with:
+  - Java 11
+  - Flume 1.11.0
+
 Current sql database engines supported
 -------------------------------
 - After the last update the code has been integrated with hibernate, so all databases supported by this technology should work.
@@ -74,7 +78,89 @@ Mandatory properties in <b>bold</b>
 | hibernate.c3p0.max_size | - | Max connection pool size |
 | default.charset.resultset | UTF-8 | Result set from DB converted to charset character encoding |
 
-Configuration example
+Configuration example for MySQL
+--------------------
+Create a MySQL database to store the sink data. In a MySQL client, run as root:
+```
+CREATE DATABASE flume DEFAULT CHARSET utf8mb4;
+```
+
+Create a MySQL table to store the sink data. In a MySQL client, run as root:
+```
+CREATE TABLE flume.log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Log ID',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Create time',
+  msg VARCHAR(10000) NOT NULL COMMENT 'Log message',
+  PRIMARY KEY (id),
+  KEY create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+Create a MySQL user. In a MySQL client, run as root:
+```
+CREATE USER flume_user@`%` IDENTIFIED BY 'flume_user_password';
+
+GRANT INSERT ON flume.log TO flume_user@`%`;
+```
+
+Create a flume config file **flume.config**:
+```
+# +++++
+agent.channels=chan1
+
+agent.channels.chan1.type=memory
+
+
+# +++++
+agent.sources=src1
+
+agent.sources.src1.channels=chan1
+
+agent.sources.src1.type=exec
+
+agent.sources.src1.command=tail -F /tmp/flume_source.log
+
+
+# +++++
+agent.sinks=sink1
+
+agent.sinks.sink1.channel=chan1
+
+agent.sinks.sink1.type=org.ricco.flume.sink.SQLSink
+
+agent.sinks.sink1.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+
+# MySQL host, port, and database name. 
+agent.sinks.sink1.hibernate.connection.url=jdbc:mysql://127.0.0.1:3306/flume?useUnicode=true&characterEncoding=utf-8
+
+# MySQL username.
+agent.sinks.sink1.hibernate.connection.user=flume_user
+
+# MySQL password.
+agent.sinks.sink1.hibernate.connection.password=flume_user_password
+
+agent.sinks.sink1.hibernate.connection.autocommit=true
+
+# MySQL table name of the table to store the sink data.
+agent.sinks.sink1.table.prefix=log
+
+# MySQL table column name of the column to store the sink data.
+agent.sinks.sink1.columns.to.insert=msg
+```
+
+Run flume:
+```
+flume-ng agent -name agent -conf-file flume.config
+```
+
+Append text to the input file of the flume source:
+```
+echo test >> /tmp/flume_source.log
+```
+
+Check the data inserted into the database table of the flume sink. If there is no data inserted, check the **flume-ng** command's log file for any error messages.
+
+Configuration example for DB2
 --------------------
 
 ```properties
