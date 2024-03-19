@@ -5,6 +5,11 @@
     <artifactId>flume-ng-sql-sink</artifactId>
     <version>1.0.0</version>
 
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+
     <packaging>jar</packaging>
     <name>Flume SQL Sink</name>
     <description>This project is used for flume-ng to export data to SQL databases.</description>
